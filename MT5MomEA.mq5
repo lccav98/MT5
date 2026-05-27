@@ -25,7 +25,7 @@ input group "=== Smart Money Concepts (SMC) & Volume (SMC ATIVO) ==="
 input bool     use_fvg_filter    = true;      // Exigir Fair Value Gap (Imbalanço FVG Ativo por Padrão)
 input bool     use_volume_filter = true;      // Exigir Volume acima da média
 input int      volume_ma_period  = 20;        // Período da média simples do Volume
-input double   volume_mult       = 0.9;       // Multiplicador de Volume (0.9 = 10% abaixo da média para testes)
+input double   volume_mult       = 1.5;       // Multiplicador de Volume (1.5 = 50% acima da média para seletividade institucional)
 
 input group "=== Filtros de Indicadores ==="
 input double   atr_mult          = 2.2;       // Multiplicador de volatilidade do ATR
