@@ -201,6 +201,37 @@ void OnDeinit(const int reason)
 }
 
 //+------------------------------------------------------------------+
+//| Normaliza o volume (lote) para os limites e passo do ativo       |
+//+------------------------------------------------------------------+
+double NormalizeVolume(string symbol, double volume)
+{
+   double min_volume = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+   double max_volume = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+   double volume_step = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+   
+   if(volume_step <= 0) volume_step = 0.01;
+   
+   // Arredonda para o passo mais próximo
+   double normalized = MathRound(volume / volume_step) * volume_step;
+   
+   // Garante limites mínimos e máximos
+   if(normalized < min_volume) normalized = min_volume;
+   if(normalized > max_volume) normalized = max_volume;
+   
+   // Calcula casas decimais baseadas no passo do lote
+   int digits = 0;
+   double step = volume_step;
+   while(step < 1.0)
+   {
+      step *= 10.0;
+      digits++;
+      if(digits > 8) break;
+   }
+   
+   return NormalizeDouble(normalized, digits);
+}
+
+//+------------------------------------------------------------------+
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
@@ -363,9 +394,9 @@ void OnTick()
          // MODO DE TESTE FORÇADO: Abre compra imediatamente para validar o robô multiativos
          if(force_test_trade)
          {
-            Print("[*] MODO TESTE FORÇADO - Disparando COMPRA de teste em ", sym);
-            // Lote mínimo de 0.01 e sem SL/TP iniciais para evitar rejeições de saldo/stops do broker no teste
-            trade.Buy(0.01, sym, ask, 0, 0, "TESTE " + EnumToString(operation_timeframe));
+            double test_lot = NormalizeVolume(sym, 0.01);
+            Print("[*] MODO TESTE FORÇADO - Disparando COMPRA de teste em ", sym, " com lote ", test_lot);
+            trade.Buy(test_lot, sym, ask, 0, 0, "TESTE " + EnumToString(operation_timeframe));
             continue; // Pula para o próximo ativo
          }
          
@@ -374,9 +405,10 @@ void OnTick()
          {
             double sl_price = ask * (1.0 - stop_loss_pct);
             double tp_price = ask * (1.0 + profit_target_2);
+            double normal_lot = NormalizeVolume(sym, lot_size);
             
-            Print("[*] MT5MomEA - Gatilho Ativo (COMPRA) disparado em ", EnumToString(operation_timeframe), " de ", sym, " | Volume: ", volume[1], " (Média: ", vol_avg, ")");
-            trade.Buy(lot_size, sym, ask, sl_price, tp_price, "LONG SMC " + EnumToString(operation_timeframe));
+            Print("[*] MT5MomEA - Gatilho Ativo (COMPRA) disparado em ", EnumToString(operation_timeframe), " de ", sym, " | Volume: ", normal_lot, " (Original: ", lot_size, ", Média Vol: ", vol_avg, ")");
+            trade.Buy(normal_lot, sym, ask, sl_price, tp_price, "LONG SMC " + EnumToString(operation_timeframe));
          }
          
          // Gatilho de VENDA (SHORT)
@@ -384,9 +416,10 @@ void OnTick()
          {
             double sl_price = bid * (1.0 + stop_loss_pct);
             double tp_price = bid * (1.0 - profit_target_2);
+            double normal_lot = NormalizeVolume(sym, lot_size);
             
-            Print("[*] MT5MomEA - Gatilho Ativo (VENDA) disparado em ", EnumToString(operation_timeframe), " de ", sym, " | Volume: ", volume[1], " (Média: ", vol_avg, ")");
-            trade.Sell(lot_size, sym, bid, sl_price, tp_price, "SHORT SMC " + EnumToString(operation_timeframe));
+            Print("[*] MT5MomEA - Gatilho Ativo (VENDA) disparado em ", EnumToString(operation_timeframe), " de ", sym, " | Volume: ", normal_lot, " (Original: ", lot_size, ", Média Vol: ", vol_avg, ")");
+            trade.Sell(normal_lot, sym, bid, sl_price, tp_price, "SHORT SMC " + EnumToString(operation_timeframe));
          }
       }
       else
