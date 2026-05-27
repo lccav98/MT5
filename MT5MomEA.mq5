@@ -232,6 +232,36 @@ double NormalizeVolume(string symbol, double volume)
 }
 
 //+------------------------------------------------------------------+
+//| Retorna o lote base dinâmico de acordo com a classe do ativo     |
+//+------------------------------------------------------------------+
+double GetDynamicLotSize(string symbol)
+{
+   string upper_sym = symbol;
+   StringToUpper(upper_sym);
+   
+   // 1. Metais Preciosos (Ouro, Prata, Platina, Paládio)
+   if(StringFind(upper_sym, "XAG") >= 0 || StringFind(upper_sym, "XAU") >= 0 || 
+      StringFind(upper_sym, "XPT") >= 0 || StringFind(upper_sym, "XPD") >= 0 ||
+      StringFind(upper_sym, "SILVER") >= 0 || StringFind(upper_sym, "GOLD") >= 0)
+   {
+      // Reduz o lote padrão em 10x para metais preciosos (mínimo de 0.01) para gerenciar o risco
+      double metal_lot = lot_size * 0.1;
+      return metal_lot;
+   }
+   
+   // 2. Ações Americanas (CFDs de Ações)
+   // Se o tamanho do contrato é 1.0 (ou seja, 1 lote = 1 ação), opera com lote base de 1.0
+   double contract_size = SymbolInfoDouble(symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   if(contract_size == 1.0)
+   {
+      return 1.0; 
+   }
+   
+   // Retorna o lote padrão para Forex, Criptos normais e Commodities
+   return lot_size;
+}
+
+//+------------------------------------------------------------------+
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
@@ -405,9 +435,10 @@ void OnTick()
          {
             double sl_price = ask * (1.0 - stop_loss_pct);
             double tp_price = ask * (1.0 + profit_target_2);
-            double normal_lot = NormalizeVolume(sym, lot_size);
+            double base_lot = GetDynamicLotSize(sym);
+            double normal_lot = NormalizeVolume(sym, base_lot);
             
-            Print("[*] MT5MomEA - Gatilho Ativo (COMPRA) disparado em ", EnumToString(operation_timeframe), " de ", sym, " | Volume: ", normal_lot, " (Original: ", lot_size, ", Média Vol: ", vol_avg, ")");
+            Print("[*] MT5MomEA - Gatilho Ativo (COMPRA) disparado em ", EnumToString(operation_timeframe), " de ", sym, " | Volume: ", normal_lot, " (Base: ", base_lot, ", Original: ", lot_size, ", Média Vol: ", vol_avg, ")");
             trade.Buy(normal_lot, sym, ask, sl_price, tp_price, "LONG SMC " + EnumToString(operation_timeframe));
          }
          
@@ -416,9 +447,10 @@ void OnTick()
          {
             double sl_price = bid * (1.0 + stop_loss_pct);
             double tp_price = bid * (1.0 - profit_target_2);
-            double normal_lot = NormalizeVolume(sym, lot_size);
+            double base_lot = GetDynamicLotSize(sym);
+            double normal_lot = NormalizeVolume(sym, base_lot);
             
-            Print("[*] MT5MomEA - Gatilho Ativo (VENDA) disparado em ", EnumToString(operation_timeframe), " de ", sym, " | Volume: ", normal_lot, " (Original: ", lot_size, ", Média Vol: ", vol_avg, ")");
+            Print("[*] MT5MomEA - Gatilho Ativo (VENDA) disparado em ", EnumToString(operation_timeframe), " de ", sym, " | Volume: ", normal_lot, " (Base: ", base_lot, ", Original: ", lot_size, ", Média Vol: ", vol_avg, ")");
             trade.Sell(normal_lot, sym, bid, sl_price, tp_price, "SHORT SMC " + EnumToString(operation_timeframe));
          }
       }
