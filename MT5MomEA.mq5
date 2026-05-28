@@ -28,7 +28,8 @@ input int      volume_ma_period  = 20;        // Período da média simples do V
 input double   volume_mult       = 1.5;       // Multiplicador de Volume (1.5 = 50% acima da média para seletividade institucional)
 
 input group "=== Filtros de Indicadores ==="
-input double   atr_mult          = 2.2;       // Multiplicador de volatilidade do ATR
+input double   atr_min_mult      = 0.8;       // ATR mínimo (x média): exige EXPANSÃO de volatilidade para momentum
+input double   atr_mult          = 3.0;       // ATR máximo (x média): guarda contra spikes anormais
 input int      rsi_max           = 70;        // RSI máximo para Compra (evitar sobrecompra)
 input int      rsi_min           = 30;        // RSI mínimo para Venda (evitar sobrevenda)
 input int      stoch_max         = 80;        // Estocástico máximo para Compra
@@ -83,6 +84,10 @@ input ENUM_TIMEFRAMES operation_timeframe = PERIOD_M1;  // Tempo gráfico de ope
 input bool            use_htf_filter      = false;      // Usar confluência de tendência de Timeframe Maior (HTF)
 input ENUM_TIMEFRAMES htf_period          = PERIOD_M15; // Timeframe Maior de Confirmação (ex: M15 ou M30)
 
+input group "=== Seleção de Ativos ==="
+input bool   scan_all_symbols = false;        // true = varre TODOS os símbolos do servidor (lento); false = usa a lista abaixo
+input string symbols_csv      = "EURUSD,GBPUSD,USDJPY,XAUUSD"; // Lista curada (separada por vírgula) usada quando scan_all_symbols=false
+
 //+------------------------------------------------------------------+
 //| Libera handles de indicadores de todos os ativos da lista        |
 //+------------------------------------------------------------------+
@@ -113,28 +118,56 @@ bool InitializeSymbolList()
    // Libera recursos anteriores se houver
    ReleaseAllHandles();
 
-   // Habilita automaticamente todos os ativos disponíveis na corretora na Observação do Mercado
-   int total_server = SymbolsTotal(false); // false = Todos os ativos do servidor
-   Print("[*] Sincronizando e adicionando ", total_server, " ativos disponíveis no servidor da corretora...");
-   for(int i = 0; i < total_server; i++)
+   // Monta a lista de nomes de ativos conforme o modo selecionado
+   string names[];
+   if(scan_all_symbols)
    {
-      string sym_name = SymbolName(i, false);
-      SymbolSelect(sym_name, true); // Adiciona na Observação do Mercado
+      // Modo varredura total: habilita TODOS os ativos do servidor (lento, muitos handles)
+      int total_server = SymbolsTotal(false);
+      Print("[*] scan_all_symbols=true: sincronizando ", total_server, " ativos do servidor...");
+      ArrayResize(names, total_server);
+      for(int i = 0; i < total_server; i++)
+      {
+         names[i] = SymbolName(i, false);
+         SymbolSelect(names[i], true);
+      }
+   }
+   else
+   {
+      // Modo lista curada: usa apenas os ativos informados em symbols_csv
+      string parts[];
+      int n = StringSplit(symbols_csv, ',', parts);
+      for(int i = 0; i < n; i++)
+      {
+         string s = parts[i];
+         StringTrimLeft(s);
+         StringTrimRight(s);
+         if(s == "") continue;
+         if(!SymbolSelect(s, true))
+         {
+            Print("[-] Aviso: ativo '", s, "' não existe na corretora e será ignorado.");
+            continue;
+         }
+         int idx = ArraySize(names);
+         ArrayResize(names, idx + 1);
+         names[idx] = s;
+      }
+      Print("[*] scan_all_symbols=false: usando lista curada com ", ArraySize(names), " ativos.");
    }
 
-   int total = SymbolsTotal(true); // true = Apenas ativos na Observação do Mercado (Market Watch)
+   int total = ArraySize(names);
    if(total <= 0)
    {
-      Print("[-] Erro: Nenhum ativo selecionado na Observação do Mercado!");
+      Print("[-] Erro: Nenhum ativo válido para monitorar! Verifique scan_all_symbols / symbols_csv.");
       return false;
    }
 
    ArrayResize(symbol_list, total);
-   Print("[*] Inicializando Scanner para ", total, " ativos visíveis na Observação do Mercado...");
+   Print("[*] Inicializando Scanner para ", total, " ativos...");
 
    for(int i = 0; i < total; i++)
    {
-      string sym = SymbolName(i, true);
+      string sym = names[i];
       symbol_list[i].symbol = sym;
       symbol_list[i].last_time = 0;
 
@@ -277,8 +310,8 @@ void OnTick()
 {
    int total_symbols = ArraySize(symbol_list);
    
-   // Se o número de ativos na Observação do Mercado mudou, reconstrói a lista dinamicamente
-   if(total_symbols != SymbolsTotal(true))
+   // No modo varredura total, se a Observação do Mercado mudou, reconstrói a lista dinamicamente
+   if(scan_all_symbols && total_symbols != SymbolsTotal(true))
    {
       Print("[*] Mudança detectada na Observação do Mercado. Reconstruindo lista de ativos...");
       if(!InitializeSymbolList()) return;
@@ -371,7 +404,8 @@ void OnTick()
       bool ema_bull = (ema5[1] > ema10[1] && ema10[1] > ema21[1]);
       bool ema_bear = (ema5[1] < ema10[1] && ema10[1] < ema21[1]);
       
-      bool atr_ok = (atr[1] <= atr_base * atr_mult);
+      // Momentum precisa de EXPANSÃO de volatilidade: ATR entre piso (expansão) e teto (guarda contra spikes)
+      bool atr_ok = (atr[1] >= atr_base * atr_min_mult && atr[1] <= atr_base * atr_mult);
       bool adx_ok = (adx[1] > adx_thresh);
       
       // Condições de Compra (LONG) - momentum é obrigatório; o resto compõe a pontuação
