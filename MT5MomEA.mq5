@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Luiz Claudio Araujo"
 #property link      "https://github.com/"
-#property version   "2.60"
+#property version   "2.70"
 #property description "Expert Advisor de Momentum, Volume e SMC Altamente Responsivo com FVG Ativo"
 #property description "Opera de forma 100% nativa e automatizada no MetaTrader 5 (macOS/Windows)"
 #property description "Filtros de Smart Money (Fair Value Gap) ativados e calibrados por padrão"
@@ -35,15 +35,24 @@ input int      stoch_max         = 80;        // Estocástico máximo para Compr
 input int      stoch_min         = 20;        // Estocástico mínimo para Venda
 input int      adx_thresh        = 20;        // ADX mínimo para força de tendência
 
-input group "=== Gerenciamento de Risco (OCO) ==="
+input group "=== Confluência (Sistema de Pontuação) ==="
+input int      min_confluence_score = 3;      // Mínimo de filtros opcionais que devem passar (0-6) além do momentum
+// Momentum (long_mom/short_mom) é SEMPRE obrigatório. Os demais filtros viram pontos.
+
+input group "=== Gerenciamento de Risco ==="
 input double   lot_size          = 0.1;       // Tamanho do Lote fixo
-input double   profit_target_1   = 0.005;     // Alvo 1 de lucro (0.5% - Parcial/Break-Even)
-input double   profit_target_2   = 0.030;     // Alvo 2 de lucro final (3.0%)
-input double   stop_loss_pct     = 0.015;     // Stop Loss inicial (1.5%)
+input bool     use_atr_stops     = true;      // Usar SL/TP baseados em ATR (recomendado para M1)
+input double   atr_sl_mult       = 1.5;       // SL = ATR * este multiplicador
+input double   atr_tp_mult       = 3.0;       // TP = ATR * este multiplicador
+input double   atr_be_mult       = 1.0;       // Break-even acionado quando lucro >= ATR * este multiplicador
+// Fallback em % (usado apenas se use_atr_stops = false)
+input double   profit_target_1   = 0.005;     // Alvo 1 % (Break-Even)
+input double   profit_target_2   = 0.030;     // Alvo 2 % final
+input double   stop_loss_pct     = 0.015;     // Stop Loss inicial %
 
 input group "=== Depuração ==="
 input bool     print_diagnostics = true;      // Imprimir status dos filtros a cada fechamento de candle
-bool           force_test_trade  = false;     // MODO TESTE FORÇADO: Abre trade de teste imediatamente para validação
+input bool     force_test_trade  = false;     // MODO TESTE FORÇADO: Abre trade de teste imediatamente para validação
 
 //--- Estrutura para gerenciar handles de indicadores por ativo
 struct SymbolHandles
@@ -365,14 +374,14 @@ void OnTick()
       bool atr_ok = (atr[1] <= atr_base * atr_mult);
       bool adx_ok = (adx[1] > adx_thresh);
       
-      // Condições de Compra (LONG)
+      // Condições de Compra (LONG) - momentum é obrigatório; o resto compõe a pontuação
       bool long_mom   = (c1 > c1_thresh && c5 > c5_thresh);
       bool long_ema   = (!use_ema_alignment || ema_bull);
       bool long_fomo  = (rsi[1] < rsi_max && stoch_k[1] < stoch_max);
       bool long_trend = (close1 > ema20[1] && ema20[1] > ema20[6]);
       bool smc_long_ok = (!use_fvg_filter || bullish_fvg);
       bool vol_ok = (!use_volume_filter || volume_institucional);
-      
+
       // Condições de Venda (SHORT)
       bool short_mom   = (c1 < -c1_thresh && c5 < -c5_thresh);
       bool short_ema   = (!use_ema_alignment || ema_bear);
@@ -380,6 +389,14 @@ void OnTick()
       bool short_trend = (close1 < ema20[1] && ema20[1] < ema20[6]);
       bool smc_short_ok = (!use_fvg_filter || bearish_fvg);
       bool vol_ok_sell = (!use_volume_filter || volume_institucional);
+
+      // Pontuação de confluência (cada filtro opcional vale 1 ponto)
+      int long_score  = (long_ema?1:0) + (long_trend?1:0) + (long_fomo?1:0) + (adx_ok?1:0) + (smc_long_ok?1:0) + (vol_ok?1:0);
+      int short_score = (short_ema?1:0) + (short_trend?1:0) + (short_fomo?1:0) + (adx_ok?1:0) + (smc_short_ok?1:0) + (vol_ok_sell?1:0);
+
+      // Entrada autorizada quando: momentum + ATR ok + score mínimo + confirmação HTF
+      bool long_entry  = (long_mom  && atr_ok && long_score  >= min_confluence_score && htf_bull);
+      bool short_entry = (allow_short && short_mom && atr_ok && short_score >= min_confluence_score && htf_bear);
 
       // DIAGNÓSTICO ATIVO NO FECHAMENTO DE CADA CANDLE DO TIMEFRAME OPERACIONAL
       if(print_diagnostics)
@@ -398,7 +415,7 @@ void OnTick()
                                             (smc_long_ok ? "OK" : "FAIL"),
                                             volume[1], (long)vol_avg, (vol_ok ? "OK" : "FAIL"),
                                             htf_str);
-         Print("[i] DIAGNOSTICO ", sym, " ", tf_str, " - ", long_details);
+         Print("[i] DIAGNOSTICO ", sym, " ", tf_str, " - ", long_details, " | SCORE L=", long_score, "/", min_confluence_score, " S=", short_score, "/", min_confluence_score, " | mom L=", (long_mom?"OK":"-"), " S=", (short_mom?"OK":"-"));
       }
 
       //--- Execução e Ordens
@@ -430,27 +447,29 @@ void OnTick()
             continue; // Pula para o próximo ativo
          }
          
+         double atr_now = atr[1]; // valor do ATR em preço para stops adaptativos
+
          // Gatilho de COMPRA (LONG)
-         if(long_mom && long_ema && atr_ok && long_fomo && long_trend && adx_ok && smc_long_ok && vol_ok && htf_bull)
+         if(long_entry)
          {
-            double sl_price = ask * (1.0 - stop_loss_pct);
-            double tp_price = ask * (1.0 + profit_target_2);
+            double sl_price = use_atr_stops ? (ask - atr_now * atr_sl_mult) : (ask * (1.0 - stop_loss_pct));
+            double tp_price = use_atr_stops ? (ask + atr_now * atr_tp_mult) : (ask * (1.0 + profit_target_2));
             double base_lot = GetDynamicLotSize(sym);
             double normal_lot = NormalizeVolume(sym, base_lot);
-            
-            Print("[*] MT5MomEA - Gatilho Ativo (COMPRA) disparado em ", EnumToString(operation_timeframe), " de ", sym, " | Volume: ", normal_lot, " (Base: ", base_lot, ", Original: ", lot_size, ", Média Vol: ", vol_avg, ")");
+
+            Print("[*] MT5MomEA - COMPRA (score ", long_score, "/", min_confluence_score, ") em ", EnumToString(operation_timeframe), " de ", sym, " | Lote: ", normal_lot, " | SL: ", sl_price, " TP: ", tp_price, " ATR: ", atr_now);
             trade.Buy(normal_lot, sym, ask, sl_price, tp_price, "LONG SMC " + EnumToString(operation_timeframe));
          }
-         
+
          // Gatilho de VENDA (SHORT)
-         else if(allow_short && short_mom && short_ema && atr_ok && short_fomo && short_trend && adx_ok && smc_short_ok && vol_ok_sell && htf_bear)
+         else if(short_entry)
          {
-            double sl_price = bid * (1.0 + stop_loss_pct);
-            double tp_price = bid * (1.0 - profit_target_2);
+            double sl_price = use_atr_stops ? (bid + atr_now * atr_sl_mult) : (bid * (1.0 + stop_loss_pct));
+            double tp_price = use_atr_stops ? (bid - atr_now * atr_tp_mult) : (bid * (1.0 - profit_target_2));
             double base_lot = GetDynamicLotSize(sym);
             double normal_lot = NormalizeVolume(sym, base_lot);
-            
-            Print("[*] MT5MomEA - Gatilho Ativo (VENDA) disparado em ", EnumToString(operation_timeframe), " de ", sym, " | Volume: ", normal_lot, " (Base: ", base_lot, ", Original: ", lot_size, ", Média Vol: ", vol_avg, ")");
+
+            Print("[*] MT5MomEA - VENDA (score ", short_score, "/", min_confluence_score, ") em ", EnumToString(operation_timeframe), " de ", sym, " | Lote: ", normal_lot, " | SL: ", sl_price, " TP: ", tp_price, " ATR: ", atr_now);
             trade.Sell(normal_lot, sym, bid, sl_price, tp_price, "SHORT SMC " + EnumToString(operation_timeframe));
          }
       }
@@ -466,10 +485,13 @@ void OnTick()
                double current_price = PositionGetDouble(POSITION_PRICE_CURRENT);
                double current_sl = PositionGetDouble(POSITION_SL);
                
+               // Distância (em preço) para acionar o break-even: ATR ou % conforme configuração
+               double be_trigger = use_atr_stops ? (atr[1] * atr_be_mult) : (entry_price * profit_target_1);
+
                if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
                {
                   // Compra: Se bater o Alvo 1, arrasta o Stop Loss para o Preço de Entrada (Break-Even)
-                  if(current_price >= entry_price * (1.0 + profit_target_1))
+                  if(current_price >= entry_price + be_trigger)
                   {
                      if(current_sl < entry_price)
                      {
@@ -481,7 +503,7 @@ void OnTick()
                else if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL)
                {
                   // Venda: Se bater o Alvo 1, arrasta o Stop Loss para o Preço de Entrada (Break-Even)
-                  if(current_price <= entry_price * (1.0 - profit_target_1))
+                  if(current_price <= entry_price - be_trigger)
                   {
                      if(current_sl > entry_price || current_sl == 0)
                      {
