@@ -5,10 +5,11 @@
 //+------------------------------------------------------------------+
 #property copyright "Luiz Claudio Araujo"
 #property link      "https://github.com/"
-#property version   "2.70"
-#property description "Expert Advisor de Momentum, Volume e SMC Altamente Responsivo com FVG Ativo"
-#property description "Opera de forma 100% nativa e automatizada no MetaTrader 5 (macOS/Windows)"
-#property description "Filtros de Smart Money (Fair Value Gap) ativados e calibrados por padrão"
+#property version   "2.80"
+#property description "Expert Advisor de Momentum/SMC calibrado para XAUUSD (ouro) em M5"
+#property description "Defaults validados em backtest (positivo H1-2025 e H2-2024)"
+#property description "ATENCAO: o edge de momentum so se confirma em ativos tendenciais (ouro)."
+#property description "Em FX majors (EURUSD) e indices o resultado e negativo - nao usar."
 
 // Inclui classe oficial para envio de ordens simplificado
 #include <Trade\Trade.mqh>
@@ -28,7 +29,7 @@ input int      volume_ma_period  = 20;        // Período da média simples do V
 input double   volume_mult       = 1.5;       // Multiplicador de Volume (1.5 = 50% acima da média para seletividade institucional)
 
 input group "=== Filtros de Indicadores ==="
-input double   atr_min_mult      = 1.5;       // ATR mínimo (x média): exige EXPANSÃO de volatilidade para momentum
+input double   atr_min_mult      = 1.0;       // ATR mínimo (x média): exige EXPANSÃO de volatilidade para momentum
 input double   atr_mult          = 3.0;       // ATR máximo (x média): guarda contra spikes anormais
 input int      rsi_max           = 70;        // RSI máximo para Compra (evitar sobrecompra)
 input int      rsi_min           = 30;        // RSI mínimo para Venda (evitar sobrevenda)
@@ -37,15 +38,15 @@ input int      stoch_min         = 20;        // Estocástico mínimo para Venda
 input int      adx_thresh        = 20;        // ADX mínimo para força de tendência
 
 input group "=== Confluência (Sistema de Pontuação) ==="
-input int      min_confluence_score = 5;      // Mínimo de filtros opcionais que devem passar (0-6) além do momentum
+input int      min_confluence_score = 4;      // Mínimo de filtros opcionais que devem passar (0-6) além do momentum
 // Momentum (long_mom/short_mom) é SEMPRE obrigatório. Os demais filtros viram pontos.
 
 input group "=== Gerenciamento de Risco ==="
 input double   lot_size          = 0.1;       // Tamanho do Lote fixo
 input bool     use_atr_stops     = true;      // Usar SL/TP baseados em ATR (recomendado para M1)
-input double   atr_sl_mult       = 1.5;       // SL = ATR * este multiplicador
-input double   atr_tp_mult       = 3.0;       // TP = ATR * este multiplicador
-input double   atr_be_mult       = 1.0;       // Break-even acionado quando lucro >= ATR * este multiplicador
+input double   atr_sl_mult       = 2.0;       // SL = ATR * este multiplicador
+input double   atr_tp_mult       = 5.0;       // TP = ATR * este multiplicador
+input double   atr_be_mult       = 2.5;       // Break-even acionado quando lucro >= ATR * este multiplicador
 // Fallback em % (usado apenas se use_atr_stops = false)
 input double   profit_target_1   = 0.005;     // Alvo 1 % (Break-Even)
 input double   profit_target_2   = 0.030;     // Alvo 2 % final
@@ -80,13 +81,13 @@ int active_magic_id = 123456;
 
 //--- Configuração dinâmica do timeframe através do painel
 input group "=== Configurações de Timeframe (Multiframe) ==="
-input ENUM_TIMEFRAMES operation_timeframe = PERIOD_M1;  // Tempo gráfico de operação (M1 a M30)
+input ENUM_TIMEFRAMES operation_timeframe = PERIOD_M5;  // Tempo gráfico de operação (M1 a M30)
 input bool            use_htf_filter      = false;      // Usar confluência de tendência de Timeframe Maior (HTF)
 input ENUM_TIMEFRAMES htf_period          = PERIOD_M15; // Timeframe Maior de Confirmação (ex: M15 ou M30)
 
 input group "=== Seleção de Ativos ==="
 input bool   scan_all_symbols = false;        // true = varre TODOS os símbolos do servidor (lento); false = usa a lista abaixo
-input string symbols_csv      = "EURUSD,GBPUSD,USDJPY,XAUUSD"; // Lista curada (separada por vírgula) usada quando scan_all_symbols=false
+input string symbols_csv      = "XAUUSD"; // Lista curada (separada por vírgula) usada quando scan_all_symbols=false
 
 //+------------------------------------------------------------------+
 //| Libera handles de indicadores de todos os ativos da lista        |
