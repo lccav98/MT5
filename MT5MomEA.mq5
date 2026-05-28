@@ -28,7 +28,7 @@ input int      volume_ma_period  = 20;        // Período da média simples do V
 input double   volume_mult       = 1.5;       // Multiplicador de Volume (1.5 = 50% acima da média para seletividade institucional)
 
 input group "=== Filtros de Indicadores ==="
-input double   atr_min_mult      = 0.8;       // ATR mínimo (x média): exige EXPANSÃO de volatilidade para momentum
+input double   atr_min_mult      = 1.5;       // ATR mínimo (x média): exige EXPANSÃO de volatilidade para momentum
 input double   atr_mult          = 3.0;       // ATR máximo (x média): guarda contra spikes anormais
 input int      rsi_max           = 70;        // RSI máximo para Compra (evitar sobrecompra)
 input int      rsi_min           = 30;        // RSI mínimo para Venda (evitar sobrevenda)
@@ -37,7 +37,7 @@ input int      stoch_min         = 20;        // Estocástico mínimo para Venda
 input int      adx_thresh        = 20;        // ADX mínimo para força de tendência
 
 input group "=== Confluência (Sistema de Pontuação) ==="
-input int      min_confluence_score = 3;      // Mínimo de filtros opcionais que devem passar (0-6) além do momentum
+input int      min_confluence_score = 5;      // Mínimo de filtros opcionais que devem passar (0-6) além do momentum
 // Momentum (long_mom/short_mom) é SEMPRE obrigatório. Os demais filtros viram pontos.
 
 input group "=== Gerenciamento de Risco ==="
