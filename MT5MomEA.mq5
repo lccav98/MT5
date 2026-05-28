@@ -42,7 +42,9 @@ input int      min_confluence_score = 4;      // Mínimo de filtros opcionais qu
 // Momentum (long_mom/short_mom) é SEMPRE obrigatório. Os demais filtros viram pontos.
 
 input group "=== Gerenciamento de Risco ==="
-input double   lot_size          = 0.1;       // Tamanho do Lote fixo
+input bool     use_risk_sizing   = true;      // Dimensionar lote por % de risco do saldo (recomendado; evita blow-up)
+input double   risk_pct          = 0.5;       // Risco por trade em % do saldo (perda no SL ~= este %)
+input double   lot_size          = 0.1;       // Lote fixo (usado apenas se use_risk_sizing = false)
 input bool     use_atr_stops     = true;      // Usar SL/TP baseados em ATR (recomendado para M1)
 input double   atr_sl_mult       = 2.0;       // SL = ATR * este multiplicador
 input double   atr_tp_mult       = 5.0;       // TP = ATR * este multiplicador
@@ -305,6 +307,34 @@ double GetDynamicLotSize(string symbol)
 }
 
 //+------------------------------------------------------------------+
+//| Calcula o lote para arriscar risk_pct do saldo dado o stop (preço)|
+//| sl_distance = distância em PREÇO entre entrada e stop loss.       |
+//| Funciona para qualquer ativo (FX, ouro, índice, cripto) pois usa  |
+//| o valor do tick do próprio símbolo. Evita blow-up de lote fixo.   |
+//+------------------------------------------------------------------+
+double CalcLotByRisk(string symbol, double sl_distance)
+{
+   double tick_size  = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+   double tick_value = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+
+   // Fallback para o lote dinâmico se faltar informação ou stop inválido
+   if(tick_size <= 0 || tick_value <= 0 || sl_distance <= 0)
+   {
+      Print("[-] Risk sizing indisponível para ", symbol, " (tick_size/value/SL). Usando lote dinâmico.");
+      return GetDynamicLotSize(symbol);
+   }
+
+   // Perda em dinheiro, por 1 lote, se o stop for atingido
+   double loss_per_lot = (sl_distance / tick_size) * tick_value;
+   if(loss_per_lot <= 0) return GetDynamicLotSize(symbol);
+
+   double risk_money = AccountInfoDouble(ACCOUNT_BALANCE) * (risk_pct / 100.0);
+   double lot = risk_money / loss_per_lot;
+
+   return lot; // NormalizeVolume() aplica passo/limites do ativo em seguida
+}
+
+//+------------------------------------------------------------------+
 //| Expert tick function                                             |
 //+------------------------------------------------------------------+
 void OnTick()
@@ -489,7 +519,7 @@ void OnTick()
          {
             double sl_price = use_atr_stops ? (ask - atr_now * atr_sl_mult) : (ask * (1.0 - stop_loss_pct));
             double tp_price = use_atr_stops ? (ask + atr_now * atr_tp_mult) : (ask * (1.0 + profit_target_2));
-            double base_lot = GetDynamicLotSize(sym);
+            double base_lot = use_risk_sizing ? CalcLotByRisk(sym, ask - sl_price) : GetDynamicLotSize(sym);
             double normal_lot = NormalizeVolume(sym, base_lot);
 
             Print("[*] MT5MomEA - COMPRA (score ", long_score, "/", min_confluence_score, ") em ", EnumToString(operation_timeframe), " de ", sym, " | Lote: ", normal_lot, " | SL: ", sl_price, " TP: ", tp_price, " ATR: ", atr_now);
@@ -501,7 +531,7 @@ void OnTick()
          {
             double sl_price = use_atr_stops ? (bid + atr_now * atr_sl_mult) : (bid * (1.0 + stop_loss_pct));
             double tp_price = use_atr_stops ? (bid - atr_now * atr_tp_mult) : (bid * (1.0 - profit_target_2));
-            double base_lot = GetDynamicLotSize(sym);
+            double base_lot = use_risk_sizing ? CalcLotByRisk(sym, sl_price - bid) : GetDynamicLotSize(sym);
             double normal_lot = NormalizeVolume(sym, base_lot);
 
             Print("[*] MT5MomEA - VENDA (score ", short_score, "/", min_confluence_score, ") em ", EnumToString(operation_timeframe), " de ", sym, " | Lote: ", normal_lot, " | SL: ", sl_price, " TP: ", tp_price, " ATR: ", atr_now);
